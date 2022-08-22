@@ -4,50 +4,72 @@ import {
   materialRenderers,
 } from "@jsonforms/material-renderers";
 import { JsonForms } from "@jsonforms/react";
-import { Box, Button, Container, Tab, Tabs } from "@mui/material";
-import { useEffect, useMemo, useState } from "react";
+import { Alert, Box, Button, Container, Tab, Tabs } from "@mui/material";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAsyncAbortable, useAsyncCallback } from "react-async-hook";
 import { useTranslation } from "react-i18next";
 import { getNamespaces, getTranslations, saveTranslations } from "./locales";
 
 function App() {
   const { t } = useTranslation(["localization-management"]);
-  const [data, setData] = useState<Record<string, string>>({});
-  const [changedData, setChangedData] = useState<typeof data>({});
-  const [namespaces, setNamespaces] = useState<string[]>([]);
+  const [changedData, setChangedData] = useState<typeof data>();
+  const [unchangedData, setUnchangedData] = useState<typeof data>();
   const [selectedNamespaceIndex, selectNamespace] = useState(0);
+  const [showSuccessAlert, setShowSuccessAlert] = useState(false);
+
+  const {
+    loading: loadingNamespaces,
+    error: errorLoadingNamespaces,
+    result: namespaces,
+  } = useAsyncAbortable(getNamespaces, []);
 
   const selectedNamespace = useMemo(
-    () => namespaces[selectedNamespaceIndex],
+    () => namespaces?.[selectedNamespaceIndex],
     [namespaces, selectedNamespaceIndex]
   );
 
-  useEffect(() => {
-    const { promise, cancel } = getNamespaces();
-    promise.then(({ canceled, data }) => {
-      if (canceled || !data) return;
-      setNamespaces(data);
-    });
-    return cancel;
-  }, []);
+  const { result: data } = useAsyncAbortable(
+    async (signal) => {
+      if (selectedNamespace === undefined) return;
+      return getTranslations(signal, selectedNamespace);
+    },
+    [selectedNamespace]
+  );
 
   useEffect(() => {
-    if (!selectedNamespace) return;
-    const { promise, cancel } = getTranslations(selectedNamespace);
-    promise.then(({ canceled, data }) => {
-      if (canceled || !data) return;
-      setData(data);
-      setChangedData(data);
-    });
-    return cancel;
-  }, [selectedNamespace]);
-
-  function onChange({ data }: Pick<JsonFormsCore, "data">) {
     setChangedData(data);
+    setUnchangedData(data);
+  }, [data]);
+
+  const onChange = useCallback(
+    ({ data }: Pick<JsonFormsCore, "data">) => setChangedData(data),
+    []
+  );
+
+  const { execute: onSave, loading: isSaving } = useAsyncCallback(async () => {
+    if (selectedNamespace === undefined || changedData === undefined) return;
+    await saveTranslations(selectedNamespace, changedData);
+    setShowSuccessAlert(true);
+    setUnchangedData(changedData);
+  });
+
+  useEffect(() => {
+    const timeout = setTimeout(
+      () => showSuccessAlert && setShowSuccessAlert(false),
+      1000
+    );
+    return () => clearTimeout(timeout);
+  }, [showSuccessAlert]);
+
+  if (loadingNamespaces) {
+    return <div className="App">Loading</div>;
   }
 
-  function onSave() {
-    saveTranslations(selectedNamespace, changedData).then(() =>
-      setData(changedData)
+  if (errorLoadingNamespaces) {
+    return (
+      <div className="App">
+        <>Error: {errorLoadingNamespaces}</>
+      </div>
     );
   }
 
@@ -58,16 +80,17 @@ function App() {
           value={selectedNamespaceIndex}
           onChange={(_, index) => selectNamespace(index)}
         >
-          {namespaces.map((namespace) => (
-            <Tab label={namespace} key={namespace} />
-          ))}
+          {namespaces &&
+            namespaces.map((namespace) => (
+              <Tab label={namespace} key={namespace} />
+            ))}
         </Tabs>
       </Box>
       <Container sx={{ margin: "1em auto 0", maxWidth: "600px" }}>
-        {data && (
+        {unchangedData && (
           <>
             <JsonForms
-              data={data}
+              data={unchangedData}
               renderers={materialRenderers}
               cells={materialCells}
               onChange={(state) => onChange(state)}
@@ -78,16 +101,22 @@ function App() {
               gap="1em"
               marginTop="1em"
             >
-              <Button variant="outlined" onClick={() => setData({ ...data })}>
+              <Button
+                variant="outlined"
+                onClick={() => setUnchangedData({ ...unchangedData })}
+              >
                 {t("reset")}
               </Button>
-              <Button variant="contained" onClick={onSave}>
+              <Button variant="contained" onClick={onSave} disabled={isSaving}>
                 {t("save")}
               </Button>
             </Box>
           </>
         )}
       </Container>
+      <Box position="absolute" bottom="1em" left="1em" right="1em">
+        {showSuccessAlert && <Alert severity="success">{t("success")}</Alert>}
+      </Box>
     </div>
   );
 }

@@ -36,7 +36,7 @@ app.put("/namespace/:namespace", async (req, res) => {
       JSON.stringify(translations, null, 2),
       { encoding: "utf-8" }
     );
-    res.status(200).send("OK!");
+    res.status(200).send({ ok: true });
   } catch (error) {
     res.status(500).send(error);
   }
